@@ -43,16 +43,21 @@ class MainActivity : ComponentActivity() {
     )
     private lateinit var storagePermissionRequest: ActivityResultLauncher<String>
 
+    private var downloadStatus = mutableStateOf("")
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        downloadStatus.value = "Esperando..."
         super.onCreate(savedInstanceState)
 
         storagePermissionRequest = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { isGranted: Boolean ->
             if (isGranted) {
+                downloadStatus.value = "Listo para descargar"
                 startDownloads()
             } else {
                 showToast("El permiso de almacenamiento es necesario para descargar los mods.")
+                downloadStatus.value = "Sin acceso al almacenamiento"
             }
         }
 
@@ -73,7 +78,7 @@ class MainActivity : ComponentActivity() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text("MiguVT Server Mod Installer", style = MaterialTheme.typography.headlineMedium)
+            Text("Instalador ModPack Server MiguVT", style = MaterialTheme.typography.headlineMedium)
             Spacer(modifier = Modifier.height(32.dp))
             Button(onClick = {
                 storagePermissionRequest.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -82,6 +87,7 @@ class MainActivity : ComponentActivity() {
             }
             Spacer(modifier = Modifier.height(16.dp))
             LinearProgressIndicator(progress = downloadProgress.value)
+            Text("Estado: ${downloadStatus.value}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 
@@ -105,7 +111,7 @@ class MainActivity : ComponentActivity() {
 
         // Verifica si el directorio existe
         if (!modsDir.exists()) {
-            showToast("No se ha encontrado QuestCraft, asegúrese de que esté instalado")
+            downloadStatus.value = "No se encontró QuestCraft, asegurese de tenerlo instalado."
             return
         }
 
@@ -117,7 +123,7 @@ class MainActivity : ComponentActivity() {
                 downloadFiles(urlsToDownload, modsDir)
             } else {
                 withContext(Dispatchers.Main) {
-                    showToast("Error al obtener la configuración de los mods.")
+                    downloadStatus.value = "Error al obtener la configuración de los mods."
                 }
             }
         }
@@ -146,6 +152,18 @@ class MainActivity : ComponentActivity() {
 
     private fun downloadFiles(modsMap: Map<String, String>, modsDir: File) {
         CoroutineScope(Dispatchers.IO).launch {
+            val totalSize = modsMap.values.filter { it != "delete" }.sumOf { urlString ->
+                try {
+                    val url = URL(urlString)
+                    val connection = url.openConnection().apply { connect() }
+                    connection.contentLength
+                } catch (e: IOException) {
+                    0
+                }
+            }
+
+            var totalDownloaded: Long = 0
+
             modsMap.forEach { (modName, urlString) ->
                 val outputFile = File(modsDir, "$modName.jar")
 
@@ -153,11 +171,11 @@ class MainActivity : ComponentActivity() {
                     if (outputFile.exists()) {
                         outputFile.delete()
                         withContext(Dispatchers.Main) {
-                            showToast("Archivo eliminado: ${outputFile.name}")
+                            downloadStatus.value = "Archivo eliminado ${outputFile.name}"
                         }
                     } else {
                         withContext(Dispatchers.Main) {
-                            showToast("El archivo a eliminar no existe: ${outputFile.name}")
+                            downloadStatus.value = "El archivo a eliminar no existe ${outputFile.name}"
                         }
                     }
                 } else {
@@ -165,31 +183,48 @@ class MainActivity : ComponentActivity() {
                         val url = URL(urlString)
                         val connection = url.openConnection()
                         connection.connect()
-                        val inputStream = BufferedInputStream(url.openStream())
+                        val fileLength = connection.contentLength // Tamaño del archivo actual
+
+                        withContext(Dispatchers.Main) {
+                            downloadStatus.value = "Descargando ${outputFile.name}"
+                        }
+
+                        val inputStream = BufferedInputStream(url.openStream(), 1024)
                         val outputStream = FileOutputStream(outputFile)
 
-                        inputStream.use { input ->
-                            outputStream.use { output ->
-                                input.copyTo(output)
+                        val data = ByteArray(1024)
+                        var count: Int
+                        while (inputStream.read(data).also { count = it } != -1) {
+                            totalDownloaded += count
+                            // Actualizar el progreso total aquí:
+                            val progress = totalDownloaded.toFloat() / totalSize
+                            withContext(Dispatchers.Main) {
+                                downloadProgress.value = progress
                             }
+                            outputStream.write(data, 0, count)
                         }
+
                         withContext(Dispatchers.Main) {
-                            showToast("Descargado: ${outputFile.name}")
+                            downloadStatus.value = "${outputFile.name} descargado"
                         }
                     } catch (e: IOException) {
                         e.printStackTrace()
                         withContext(Dispatchers.Main) {
-                            showToast("Error descargando el archivo: ${outputFile.name}")
+                            showToast("Error descargando el archivo ${outputFile.name}, saltando en 1 segundo")
+                            delay(1000)
                         }
                     }
                 }
             }
             withContext(Dispatchers.Main) {
                 showToast("Proceso de actualización de mods completado")
-                downloadProgress.value = 0f
+                downloadProgress.value = 1f // Indicar que la descarga ha finalizado
+                downloadStatus.value = "Instalación completada"
             }
         }
     }
+
+
 
 
 
